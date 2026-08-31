@@ -21,3 +21,4 @@ bytes = "1"
 
 [dev-dependencies]
 jsonschema = "0.52"
+unicode-width = "0.2"

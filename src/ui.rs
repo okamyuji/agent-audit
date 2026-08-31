@@ -1,7 +1,7 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
-    widgets::Paragraph,
+    style::{Color, Modifier, Style},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
 };
 
@@ -52,11 +52,6 @@ pub fn draw(f: &mut Frame, app: &App) {
 }
 
 fn sessions_draw(f: &mut Frame, app: &App, area: Rect) {
-    use ratatui::{
-        style::Modifier,
-        widgets::{Block, Borders, List, ListItem, ListState},
-    };
-
     let items: Vec<ListItem> = app
         .sessions
         .iter()
@@ -81,11 +76,6 @@ fn sessions_draw(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn timeline_draw(f: &mut Frame, app: &App, area: Rect) {
-    use ratatui::{
-        style::Modifier,
-        widgets::{Block, Borders, List, ListItem, ListState},
-    };
-
     let items: Vec<ListItem> = app
         .rows
         .iter()
@@ -123,8 +113,6 @@ fn timeline_draw(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn detail_draw(f: &mut Frame, app: &App, area: Rect) {
-    use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
-
     let body = app.selected_event().map(event_detail).unwrap_or_default();
     let title = if app.focus == crate::app::Focus::Detail {
         "詳細 *"
@@ -203,26 +191,28 @@ mod tests {
     }
 
     fn render(app: &App) -> String {
+        use unicode_width::UnicodeWidthStr;
+
         let backend = TestBackend::new(120, 40);
         let mut term = Terminal::new(backend).unwrap();
         term.draw(|f| draw(f, app)).unwrap();
         let buf = term.backend().buffer().clone();
         let mut s = String::new();
+        let width = buf.area.width as usize;
         let mut prev_was_wide = false;
         for (idx, cell) in buf.content().iter().enumerate() {
             let symbol = cell.symbol();
-            // Skip space cells that follow multi-byte characters (width placeholders)
+            // Skip space cells following multi-byte characters (width placeholders)
             if symbol == " " && prev_was_wide {
                 prev_was_wide = false;
                 continue;
             }
-            // Check if this is a newline position
-            if (idx + 1) % 120 == 0 {
+            s.push_str(symbol);
+            prev_was_wide = symbol.width() > 1;
+            // Add newline at end of each row
+            if (idx + 1) % width == 0 {
                 s.push('\n');
                 prev_was_wide = false;
-            } else {
-                s.push_str(symbol);
-                prev_was_wide = symbol.len() > 1;
             }
         }
         s
