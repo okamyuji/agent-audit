@@ -104,6 +104,7 @@ pub fn is_truncated(payload: &serde_json::Value) -> Option<u64> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolGroup {
+    pub run_id: String,
     pub call_id: String,
     pub attempt: usize,
     pub response: Option<usize>,
@@ -122,15 +123,16 @@ pub fn group_tool_calls(events: &[AuditEvent]) -> Vec<ToolGroup> {
         let open = groups
             .iter_mut()
             .rev()
-            .find(|g| g.call_id == cid && g.result.is_none());
+            .find(|g| g.run_id == e.run_id && g.call_id == cid && g.result.is_none());
         match e.kind {
             Kind::LlmResponse => {
                 if let Some(g) = open.filter(|g| g.response.is_none()) {
                     g.response = Some(i);
                 } else {
-                    let n = attempts.entry(cid.to_string()).or_insert(0);
+                    let n = attempts.entry(format!("{}/{cid}", e.run_id)).or_insert(0);
                     *n += 1;
                     groups.push(ToolGroup {
+                        run_id: e.run_id.clone(),
                         call_id: cid.to_string(),
                         attempt: *n,
                         response: Some(i),
@@ -143,9 +145,10 @@ pub fn group_tool_calls(events: &[AuditEvent]) -> Vec<ToolGroup> {
                 if let Some(g) = open.filter(|g| g.call.is_none()) {
                     g.call = Some(i);
                 } else {
-                    let n = attempts.entry(cid.to_string()).or_insert(0);
+                    let n = attempts.entry(format!("{}/{cid}", e.run_id)).or_insert(0);
                     *n += 1;
                     groups.push(ToolGroup {
+                        run_id: e.run_id.clone(),
                         call_id: cid.to_string(),
                         attempt: *n,
                         response: None,
@@ -158,9 +161,10 @@ pub fn group_tool_calls(events: &[AuditEvent]) -> Vec<ToolGroup> {
                 if let Some(g) = open {
                     g.result = Some(i);
                 } else {
-                    let n = attempts.entry(cid.to_string()).or_insert(0);
+                    let n = attempts.entry(format!("{}/{cid}", e.run_id)).or_insert(0);
                     *n += 1;
                     groups.push(ToolGroup {
+                        run_id: e.run_id.clone(),
                         call_id: cid.to_string(),
                         attempt: *n,
                         response: None,
@@ -193,6 +197,19 @@ mod tests {
             call_id: None,
             payload: serde_json::json!({"input_tokens": 1, "output_tokens": 1}),
         }
+    }
+
+    #[test]
+    fn tool_groups_do_not_cross_run_boundaries() {
+        let mut a = synth(Kind::ToolCall, Some("c1"));
+        a.run_id = "run-a".to_string();
+        let mut b = synth(Kind::ToolResult, Some("c1"));
+        b.run_id = "run-b".to_string();
+        let groups = group_tool_calls(&[a, b]);
+        assert_eq!(groups.len(), 2, "別 run の同じ call_id は別グループ");
+        assert!(groups[0].run_id == "run-a" && groups[0].result.is_none());
+        assert!(groups[1].run_id == "run-b" && groups[1].result.is_some());
+        assert_eq!((groups[0].attempt, groups[1].attempt), (1, 1));
     }
 
     #[test]

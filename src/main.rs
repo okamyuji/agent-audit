@@ -16,6 +16,12 @@ fn read_pat() -> anyhow::Result<String> {
     std::env::var("IGGY_PAT").map_err(|_| anyhow::anyhow!("環境変数 IGGY_PAT を設定してください"))
 }
 
+/// 端末を触る前に済ませる検査。main の分岐数を増やさないためここに分離する
+fn startup(cli: &Cli) -> anyhow::Result<String> {
+    agent_audit::runtime::validate_transport(&cli.iggy_addr, cli.tls)?;
+    read_pat()
+}
+
 fn enter_alt_screen() -> anyhow::Result<io::Stdout> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -42,7 +48,7 @@ fn teardown_terminal(term: &mut Terminal<CrosstermBackend<io::Stdout>>) {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let pat = read_pat()?;
+    let pat = startup(&cli)?;
     let (tx, mut rx) = mpsc::channel::<Msg>(64);
     let (sel_tx, sel_rx) = tokio::sync::watch::channel::<(Option<String>, bool)>((None, false));
     tokio::spawn(network_loop(cli, pat, tx, sel_rx));
@@ -57,6 +63,17 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_rejects_remote_plaintext_before_reading_pat() {
+        let cli = Cli {
+            iggy_addr: "10.0.0.1:8090".to_string(),
+            stream: "agent-audit".to_string(),
+            tls: false,
+        };
+        let err = startup(&cli).unwrap_err().to_string();
+        assert!(err.contains("--tls"), "{err}");
+    }
 
     /// 同じプロセス内の環境変数を読み書きするため、他のテストと並行実行させない
     /// よう1つのテスト関数にまとめる

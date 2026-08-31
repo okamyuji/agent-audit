@@ -24,6 +24,27 @@ pub struct Cli {
     /// stream 名
     #[arg(long, default_value = "agent-audit")]
     pub stream: String,
+    /// TLS で接続する（ループバック以外のアドレスでは必須）
+    #[arg(long)]
+    pub tls: bool,
+}
+
+/// PAT を平文で送らないための事前検査。TLS か、ループバック宛だけを許す
+pub fn validate_transport(addr: &str, tls: bool) -> anyhow::Result<()> {
+    if tls {
+        return Ok(());
+    }
+    let host = addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(addr);
+    let host = host.trim_matches(|c| c == '[' || c == ']');
+    let is_loopback = host == "localhost"
+        || host
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false);
+    if is_loopback {
+        return Ok(());
+    }
+    anyhow::bail!("{addr} は平文 TCP のリモート宛です。--tls を付けるか 127.0.0.1 を使ってください")
 }
 
 /// 再接続バックオフの次の待ち時間。1 秒から倍増し、30 秒で頭打ちにする
@@ -41,12 +62,13 @@ struct IggyConnector {
     addr: String,
     stream: String,
     pat: String,
+    tls: bool,
 }
 
 #[async_trait]
 impl Connector for IggyConnector {
     async fn connect(&self) -> anyhow::Result<Arc<dyn Backend>> {
-        let be = IggyBackend::connect(&self.addr, &self.stream, &self.pat).await?;
+        let be = IggyBackend::connect(&self.addr, &self.stream, &self.pat, self.tls).await?;
         Ok(Arc::new(be))
     }
 }
@@ -87,6 +109,7 @@ pub async fn network_loop(
         addr: cli.iggy_addr,
         stream: cli.stream,
         pat,
+        tls: cli.tls,
     };
     run_network_loop(&connector, tx, sel).await
 }
@@ -147,7 +170,7 @@ async fn run_session(
                 let Some(session) = session else { continue };
                 let need_full = loaded.as_ref().map(|(s, _)| s != &session).unwrap_or(true);
                 if need_full {
-                    match with_timeout(fetch_all(be.as_ref(), &session)).await {
+                    match fetch_all(be.as_ref(), &session, CALL_TIMEOUT).await {
                         Ok((raw, next)) => {
                             loaded = Some((session.clone(), next));
                             let _ = tx.send(Msg::Events { session, raw, replace: true }).await;
@@ -183,6 +206,24 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
+
+    #[test]
+    fn transport_requires_tls_unless_loopback() {
+        for (addr, tls, ok) in [
+            ("127.0.0.1:8090", false, true),
+            ("localhost:8090", false, true),
+            ("[::1]:8090", false, true),
+            ("10.0.0.5:8090", false, false),
+            ("iggy.example.com:8090", false, false),
+            ("iggy.example.com:8090", true, true),
+        ] {
+            assert_eq!(
+                validate_transport(addr, tls).is_ok(),
+                ok,
+                "{addr} tls={tls}"
+            );
+        }
+    }
 
     #[test]
     fn cli_parses_defaults() {

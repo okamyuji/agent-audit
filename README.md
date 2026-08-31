@@ -18,7 +18,7 @@ export IGGY_PAT=<token>
 cargo run -- --iggy-addr 127.0.0.1:8090 --stream agent-audit
 ```
 
-`--iggy-addr`と`--stream`は省略でき、既定値はそれぞれ`127.0.0.1:8090`と`agent-audit`です。
+`--iggy-addr`と`--stream`は省略でき、既定値はそれぞれ`127.0.0.1:8090`と`agent-audit`です。ループバック以外のアドレスへ接続するときは`--tls`を付けます。TLSなしのリモート接続はPATが平文で流れるため起動時に拒否します。
 
 ## キー操作
 

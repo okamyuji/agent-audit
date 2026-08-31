@@ -96,7 +96,7 @@ async fn main_flows_end_to_end() -> anyhow::Result<()> {
     let (addr, pat, container) = start_iggy().await?;
     let _guard = ContainerGuard::new(container.clone());
     let stream = "agent-audit-e2e";
-    let be = IggyBackend::connect(&addr, stream, &pat).await?;
+    let be = IggyBackend::connect(&addr, stream, &pat, false).await?;
     be.ensure_stream_for_test().await?;
     be.produce_for_test("s-alpha", &fixture_lines("basic.json"))
         .await?;
@@ -112,6 +112,7 @@ async fn main_flows_end_to_end() -> anyhow::Result<()> {
         Cli {
             iggy_addr: addr.clone(),
             stream: stream.into(),
+            tls: false,
         },
         pat.clone(),
         tx,

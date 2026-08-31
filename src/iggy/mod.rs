@@ -11,6 +11,10 @@ use iggy::prelude::*;
 pub mod testsupport;
 
 pub const POLL_BATCH: u32 = 100;
+/// 読む partition。Go プロデューサ（go-llm-agent internal/audit/sender.go）は REST の
+/// `partitioning: {kind: partition_id, value: 0}` で常に partition 0 に書くため、ここも 0 に固定する。
+/// 別 partition に書くプロデューサが現れたら、この定数を設定へ昇格させる
+pub const PARTITION_ID: u32 = 0;
 
 #[async_trait]
 pub trait Backend: Send + Sync {
@@ -24,10 +28,12 @@ pub struct IggyBackend {
 }
 
 impl IggyBackend {
-    pub async fn connect(addr: &str, stream: &str, pat: &str) -> anyhow::Result<Self> {
+    pub async fn connect(addr: &str, stream: &str, pat: &str, tls: bool) -> anyhow::Result<Self> {
         let client = IggyClientBuilder::new()
             .with_tcp()
             .with_server_address(addr.to_string())
+            .with_tls_enabled(tls)
+            .with_tls_validate_certificate(tls)
             .build()?;
         client.connect().await.context("connect to iggy")?;
         client
@@ -103,7 +109,7 @@ impl Backend for IggyBackend {
             .poll_messages(
                 &self.stream_id()?,
                 &Identifier::named(session)?,
-                Some(0),
+                Some(PARTITION_ID),
                 &Consumer::default(),
                 &PollingStrategy::offset(offset),
                 POLL_BATCH,
@@ -120,12 +126,20 @@ impl Backend for IggyBackend {
     }
 }
 
-/// offset 0 から空になるまで読む
-pub async fn fetch_all(b: &dyn Backend, session: &str) -> anyhow::Result<(Vec<Vec<u8>>, u64)> {
+/// offset 0 から空になるまで読む。`per_call` は 1 バッチごとの上限時間。履歴全体ではなく
+/// バッチ単位で区切ることで、長い履歴の初回読み込みが常にタイムアウトして再接続ループに
+/// 陥る事態を避ける
+pub async fn fetch_all(
+    b: &dyn Backend,
+    session: &str,
+    per_call: std::time::Duration,
+) -> anyhow::Result<(Vec<Vec<u8>>, u64)> {
     let mut all = Vec::new();
     let mut off = 0;
     loop {
-        let (batch, next) = b.fetch_from(session, off).await?;
+        let (batch, next) = tokio::time::timeout(per_call, b.fetch_from(session, off))
+            .await
+            .map_err(|_| anyhow::anyhow!("応答がありません（タイムアウト）"))??;
         if batch.is_empty() {
             return Ok((all, off));
         }
@@ -161,7 +175,9 @@ mod tests {
             (vec![b"a".to_vec(), b"b".to_vec()], 2),
             (vec![b"c".to_vec()], 3),
         ]));
-        let (all, next) = fetch_all(&be, "s").await.unwrap();
+        let (all, next) = fetch_all(&be, "s", std::time::Duration::from_secs(5))
+            .await
+            .unwrap();
         assert_eq!(all, vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
         assert_eq!(next, 3);
     }

@@ -2,7 +2,7 @@
 # tools/quality-gate.sh: コミット前に通す。引数は比較元のコミット（既定 origin/main か初回 commit）
 set -euo pipefail
 cd "$(dirname "$0")/.."
-base="${1:-$(git merge-base HEAD main 2>/dev/null || git rev-list --max-parents=0 HEAD)}"
+base="${1:-$(git merge-base HEAD origin/main 2>/dev/null || git rev-list --max-parents=0 HEAD)}"
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test

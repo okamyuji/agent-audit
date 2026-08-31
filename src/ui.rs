@@ -96,7 +96,10 @@ fn timeline_draw(f: &mut Frame, app: &App, area: Rect) {
                 } else {
                     String::new()
                 };
-                ListItem::new(format!("{mark} ツール呼出 {}{attempt}{status}", g.call_id))
+                ListItem::new(format!(
+                    "{mark} ツール呼出 {}{attempt}{status}",
+                    sanitize(&g.call_id)
+                ))
             }
         })
         .collect();
@@ -146,7 +149,7 @@ pub fn event_summary(e: &AuditEvent) -> String {
     match e.kind {
         Kind::ToolCall | Kind::ToolResult => {
             if let Some(name) = e.payload.get("name").and_then(|v| v.as_str()) {
-                s.push_str(&format!(" {name}"));
+                s.push_str(&format!(" {}", sanitize(name)));
             }
             if e.payload.get("is_error").and_then(|v| v.as_bool()) == Some(true) {
                 s.push_str(" [error]");
@@ -159,7 +162,7 @@ pub fn event_summary(e: &AuditEvent) -> String {
                 .and_then(|v| v.get("name"))
                 .and_then(|v| v.as_str())
             {
-                s.push_str(&format!(" → {tc}"));
+                s.push_str(&format!(" → {}", sanitize(tc)));
             }
         }
         _ => {}
