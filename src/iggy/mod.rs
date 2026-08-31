@@ -133,3 +133,36 @@ pub async fn fetch_all(b: &dyn Backend, session: &str) -> anyhow::Result<(Vec<Ve
         off = next;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    struct Batches(Mutex<Vec<(Vec<Vec<u8>>, u64)>>);
+
+    #[async_trait::async_trait]
+    impl Backend for Batches {
+        async fn list_sessions(&self) -> anyhow::Result<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn fetch_from(&self, _s: &str, offset: u64) -> anyhow::Result<(Vec<Vec<u8>>, u64)> {
+            let mut q = self.0.lock().unwrap();
+            if q.is_empty() {
+                return Ok((vec![], offset));
+            }
+            Ok(q.remove(0))
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_all_concatenates_batches_until_empty_and_returns_next_offset() {
+        let be = Batches(Mutex::new(vec![
+            (vec![b"a".to_vec(), b"b".to_vec()], 2),
+            (vec![b"c".to_vec()], 3),
+        ]));
+        let (all, next) = fetch_all(&be, "s").await.unwrap();
+        assert_eq!(all, vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
+        assert_eq!(next, 3);
+    }
+}

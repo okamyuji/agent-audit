@@ -208,6 +208,102 @@ mod tests {
     use crate::app::Msg;
     use ratatui::{backend::TestBackend, Terminal};
 
+    fn synth(kind: Kind, payload: serde_json::Value) -> AuditEvent {
+        AuditEvent {
+            v: 1,
+            id: "id".to_string(),
+            session_id: "s".to_string(),
+            run_id: "r".to_string(),
+            seq: 0,
+            ts: chrono::Utc::now(),
+            kind,
+            provider: None,
+            model: None,
+            call_id: Some("c".to_string()),
+            payload,
+        }
+    }
+
+    #[test]
+    fn focus_marker_follows_focused_pane() {
+        let mut app = App::new();
+        app.apply(Msg::Sessions(vec!["s1".into()]));
+        for (focus, own, others) in [
+            (
+                crate::app::Focus::Sessions,
+                "セッション *",
+                ["タイムライン *", "詳細 *"],
+            ),
+            (
+                crate::app::Focus::Timeline,
+                "タイムライン *",
+                ["セッション *", "詳細 *"],
+            ),
+            (
+                crate::app::Focus::Detail,
+                "詳細 *",
+                ["セッション *", "タイムライン *"],
+            ),
+        ] {
+            app.focus = focus;
+            let s = render(&app);
+            assert!(s.contains(own), "{focus:?}: {s}");
+            for o in others {
+                assert!(!s.contains(o), "{focus:?} must not mark {o}: {s}");
+            }
+        }
+    }
+
+    #[test]
+    fn timeline_shows_attempt_number_only_from_second_attempt() {
+        let mut app = App::new();
+        app.apply(Msg::Sessions(vec!["s1".into()]));
+        let mut raw = raw_fixture("basic.json");
+        let repeat: Vec<Vec<u8>> = raw
+            .iter()
+            .filter_map(|r| {
+                let mut v: serde_json::Value = serde_json::from_slice(r).ok()?;
+                if v.get("call_id")?.as_str()? != "c1" {
+                    return None;
+                }
+                v["seq"] = serde_json::json!(v["seq"].as_u64().unwrap() + 100);
+                v["id"] = serde_json::json!(format!("dup-{}", v["seq"]));
+                Some(v.to_string().into_bytes())
+            })
+            .collect();
+        raw.extend(repeat);
+        app.apply(Msg::Events {
+            session: "s1".into(),
+            raw,
+            replace: true,
+        });
+        assert_eq!(app.groups.len(), 2);
+        let s = render(&app);
+        assert!(s.contains("試行2"), "{s}");
+        assert!(!s.contains("試行1"), "初回には試行番号を付けない: {s}");
+    }
+
+    #[test]
+    fn event_summary_shows_tool_name_error_flag_and_response_tool_call() {
+        let call = synth(Kind::ToolCall, serde_json::json!({"name": "shell"}));
+        assert!(event_summary(&call).contains(" shell"));
+        let bad = synth(
+            Kind::ToolResult,
+            serde_json::json!({"name": "shell", "content": "x", "is_error": true, "duration_ms": 1}),
+        );
+        assert!(event_summary(&bad).contains("[error]"));
+        let good = synth(
+            Kind::ToolResult,
+            serde_json::json!({"name": "shell", "content": "x", "is_error": false, "duration_ms": 1}),
+        );
+        assert!(!event_summary(&good).contains("[error]"));
+        let resp = synth(
+            Kind::LlmResponse,
+            serde_json::json!({"tool_call": {"name": "shell", "arguments": {}}}),
+        );
+        assert!(event_summary(&resp).contains("→ shell"));
+    }
+
     fn raw_fixture(name: &str) -> Vec<Vec<u8>> {
         let raw = std::fs::read(format!(
             "{}/tests/fixtures/{name}",

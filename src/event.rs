@@ -179,6 +179,50 @@ pub fn group_tool_calls(events: &[AuditEvent]) -> Vec<ToolGroup> {
 mod tests {
     use super::*;
 
+    fn mk(run: &str, seq: u64, ts: &str) -> AuditEvent {
+        AuditEvent {
+            v: 1,
+            id: format!("{run}-{seq}-{ts}"),
+            session_id: "s".to_string(),
+            run_id: run.to_string(),
+            seq,
+            ts: ts.parse().unwrap(),
+            kind: Kind::Usage,
+            provider: None,
+            model: None,
+            call_id: None,
+            payload: serde_json::json!({"input_tokens": 1, "output_tokens": 1}),
+        }
+    }
+
+    #[test]
+    fn decode_all_counts_accepted() {
+        let raw: Vec<Vec<u8>> = load("basic.json")
+            .iter()
+            .map(|e| serde_json::to_vec(e).unwrap())
+            .collect();
+        let (evs, stats) = decode_all(raw.iter().map(|v| v.as_slice()));
+        assert_eq!((evs.len(), stats.accepted, stats.skipped), (7, 7, 0));
+    }
+
+    #[test]
+    fn run_order_uses_ts_of_minimum_seq_even_when_it_arrives_late_or_duplicated() {
+        // run A: seq1 (10:05) が先に届き、seq0 (10:00) が後から届く。さらに seq0 の
+        // 重複が遅い ts (10:09) で届く。run A の鍵は「最小 seq の ts」= 10:00 でなければならない
+        let evs = order_and_dedup(vec![
+            mk("A", 1, "2026-01-01T10:05:00Z"),
+            mk("B", 0, "2026-01-01T10:02:00Z"),
+            mk("A", 0, "2026-01-01T10:00:00Z"),
+            mk("A", 0, "2026-01-01T10:09:00Z"),
+        ]);
+        assert_eq!(
+            evs.iter()
+                .map(|e| (e.run_id.as_str(), e.seq))
+                .collect::<Vec<_>>(),
+            vec![("A", 0), ("A", 1), ("B", 0)]
+        );
+    }
+
     fn load(name: &str) -> Vec<AuditEvent> {
         let raw = std::fs::read(format!(
             "{}/tests/fixtures/{name}",
@@ -315,5 +359,21 @@ mod tests {
         assert!(groups[0].call.is_some() && groups[0].response.is_none());
         assert_eq!(groups[1].call_id, "cz");
         assert!(groups[1].result.is_some() && groups[1].call.is_none());
+        assert_eq!(
+            (groups[0].attempt, groups[1].attempt),
+            (1, 1),
+            "初回の試行番号は call 起点でも result 起点でも 1"
+        );
+    }
+
+    #[test]
+    fn result_first_repeat_increments_attempt() {
+        let evs = vec![
+            synth(Kind::ToolResult, Some("cz")),
+            synth(Kind::ToolResult, Some("cz")),
+        ];
+        let groups = group_tool_calls(&evs);
+        assert_eq!(groups.len(), 2);
+        assert_eq!((groups[0].attempt, groups[1].attempt), (1, 2));
     }
 }

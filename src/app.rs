@@ -243,6 +243,92 @@ mod tests {
         KeyEvent::new(c, KeyModifiers::NONE)
     }
 
+    #[test]
+    fn collapse_affects_only_the_selected_group() {
+        let mut app = App::new();
+        app.apply(Msg::Sessions(vec!["s1".into()]));
+        app.apply(Msg::Events {
+            session: "s1".into(),
+            raw: vec![
+                ev(1, "2026-01-01T00:00:01Z", "r", "tool_call", Some("c1")),
+                ev(2, "2026-01-01T00:00:02Z", "r", "tool_result", Some("c1")),
+                ev(3, "2026-01-01T00:00:03Z", "r", "tool_call", Some("c2")),
+                ev(4, "2026-01-01T00:00:04Z", "r", "tool_result", Some("c2")),
+            ],
+            replace: true,
+        });
+        assert_eq!(app.groups.len(), 2);
+        let all = app.rows.len();
+        app.focus = Focus::Timeline;
+        app.selected_row = app
+            .rows
+            .iter()
+            .position(|r| matches!(r, Row::Group { .. }))
+            .unwrap();
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(
+            app.rows.len(),
+            all - 2,
+            "c1 の 2 イベントだけ隠れ、c2 は開いたまま"
+        );
+    }
+
+    #[test]
+    fn sessions_refresh_keeps_selection_by_name() {
+        let mut app = App::new();
+        app.apply(Msg::Sessions(vec!["s1".into(), "s3".into()]));
+        app.on_key(key(KeyCode::Char('j')));
+        assert_eq!(app.session_name(), Some("s3"));
+        // 一覧の再取得で s2 が間に入り、s3 の位置が 1 → 2 にずれる
+        app.apply(Msg::Sessions(vec!["s1".into(), "s2".into(), "s3".into()]));
+        assert_eq!(app.selected_session, 2);
+        assert_eq!(app.session_name(), Some("s3"));
+    }
+
+    #[test]
+    fn skipped_accumulates_on_merge_and_resets_on_replace() {
+        let mut app = App::new();
+        app.apply(Msg::Sessions(vec!["s1".into()]));
+        app.apply(Msg::Events {
+            session: "s1".into(),
+            raw: vec![b"not json".to_vec()],
+            replace: true,
+        });
+        assert_eq!(app.skipped, 1);
+        app.apply(Msg::Events {
+            session: "s1".into(),
+            raw: vec![b"still not json".to_vec(), b"{}".to_vec()],
+            replace: false,
+        });
+        assert_eq!(app.skipped, 3);
+        app.apply(Msg::Events {
+            session: "s1".into(),
+            raw: vec![b"x".to_vec()],
+            replace: true,
+        });
+        assert_eq!(app.skipped, 1);
+    }
+
+    #[test]
+    fn follow_selects_last_row_only_when_enabled() {
+        let mut app = App::new();
+        app.apply(Msg::Sessions(vec!["s1".into()]));
+        app.apply(Msg::Events {
+            session: "s1".into(),
+            raw: raw_fixture("basic.json"),
+            replace: true,
+        });
+        assert_eq!(app.selected_row, 0, "追尾オフでは先頭のまま");
+        app.follow = true;
+        app.apply(Msg::Events {
+            session: "s1".into(),
+            raw: raw_fixture("basic.json"),
+            replace: true,
+        });
+        assert!(app.rows.len() > 1);
+        assert_eq!(app.selected_row, app.rows.len() - 1);
+    }
+
     fn raw_fixture(name: &str) -> Vec<Vec<u8>> {
         let raw = std::fs::read(format!(
             "{}/tests/fixtures/{name}",

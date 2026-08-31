@@ -261,10 +261,19 @@ mod tests {
     /// （sessions_tick と follow_tick は select! で競合し、どちらが先に発火するか
     /// テストからは制御できないため）
     async fn next_meaningful(rx: &mut mpsc::Receiver<Msg>) -> Msg {
+        // 上限を切らないと、期待したメッセージが来ない欠陥（mutant）で無限に待ち続けて
+        // cargo-mutants 側の timeout に落ちる。start_paused の時計では sessions_tick が
+        // 連続発火して idle にならず time::timeout が効かないため、スキップ回数で打ち切る
+        let mut skipped = 0usize;
         loop {
-            let m = rx.recv().await.expect("channel closed unexpectedly");
+            let m = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .expect("no message within 5s")
+                .expect("channel closed unexpectedly");
             if let Msg::Sessions(s) = &m {
                 if s.is_empty() {
+                    skipped += 1;
+                    assert!(skipped < 1000, "only empty session lists arrived");
                     continue;
                 }
             }
@@ -282,7 +291,12 @@ mod tests {
                 .with_list(Ok(vec!["s1".to_string()]))
                 .with_list(Err("boom".to_string())),
         );
-        let exit = run_session(be, &tx, &mut sel).await;
+        let exit = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            run_session(be, &tx, &mut sel),
+        )
+        .await
+        .expect("run_session did not exit");
         assert_eq!(exit, LoopExit::Reconnect);
 
         let first = next_meaningful(&mut rx).await;
@@ -319,7 +333,10 @@ mod tests {
 
         // 読み込み後は無害にアイドルするだけなので、selection を閉じて Shutdown させる
         drop(sel_tx);
-        let exit = handle.await.unwrap();
+        let exit = tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+            .await
+            .expect("run_session did not exit")
+            .unwrap();
         assert_eq!(exit, LoopExit::Shutdown);
     }
 
@@ -330,7 +347,12 @@ mod tests {
         let mut sel = sel_rx;
         let be: Arc<dyn Backend> =
             Arc::new(ScriptedBackend::default().with_fetch(Err("boom".to_string())));
-        let exit = run_session(be, &tx, &mut sel).await;
+        let exit = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            run_session(be, &tx, &mut sel),
+        )
+        .await
+        .expect("run_session did not exit");
         assert_eq!(exit, LoopExit::Reconnect);
         let msg = next_meaningful(&mut rx).await;
         match msg {
@@ -378,7 +400,10 @@ mod tests {
         // 3回目の空応答はメッセージを送らない。selection を閉じて Shutdown させ、
         // 追加のメッセージが来ていないことを確認する
         drop(sel_tx);
-        let exit = handle.await.unwrap();
+        let exit = tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+            .await
+            .expect("run_session did not exit")
+            .unwrap();
         assert_eq!(exit, LoopExit::Shutdown);
         while let Ok(m) = rx.try_recv() {
             if let Msg::Sessions(s) = &m {
@@ -470,7 +495,10 @@ mod tests {
         assert_eq!(m6, Msg::Connected);
 
         drop(sel_tx);
-        let total_calls = handle.await.unwrap();
+        let total_calls = tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+            .await
+            .expect("network loop did not exit")
+            .unwrap();
         assert_eq!(total_calls, 5);
     }
 
