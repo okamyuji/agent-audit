@@ -1,0 +1,4 @@
+[
+  {"v": 1, "id": "550e8400-e29b-41d4-a716-446655440020", "session_id": "s1", "run_id": "550e8400-e29b-41d4-a716-446655440120", "seq": 0, "ts": "2025-01-01T10:00:00Z", "kind": "llm_request", "provider": "llamacpp", "model": "m", "payload": {"messages": [{"role": "user", "content": "line one\nline two\nline three"}]}},
+  {"v": 1, "id": "550e8400-e29b-41d4-a716-446655440021", "session_id": "s1", "run_id": "550e8400-e29b-41d4-a716-446655440120", "seq": 1, "ts": "2025-01-01T10:00:01Z", "kind": "llm_response", "provider": "llamacpp", "model": "m", "payload": {"content": "answer one\nanswer two"}}
+]

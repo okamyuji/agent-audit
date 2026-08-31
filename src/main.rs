@@ -36,7 +36,10 @@ fn teardown_terminal(term: &mut Terminal<CrosstermBackend<io::Stdout>>) {
     let _ = term.show_cursor();
 }
 
-#[tokio::main]
+// run_ui has no .await point in its loop body, so on a single-worker runtime it never
+// yields and network_loop is never polled — the UI hangs silently forever with an
+// empty session list. Pin at least 2 workers so network_loop always gets a thread.
+#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let pat = read_pat()?;

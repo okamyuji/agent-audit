@@ -57,7 +57,39 @@ async fn wait_for_generated_root_password(
 /// 統合テストバイナリを直列実行することに依存して同時起動を避けている
 /// （cargo は既定でテストバイナリを1つずつ実行するため、並列化するテストランナー
 /// （nextest 等）を使わない限り安全）。
+/// `docker ps -q --filter name=agent-audit-test-iggy-` の標準出力から、他の
+/// agent-audit テストコンテナが動いている場合のエラーメッセージを組み立てる。
+/// 動いていなければ `None`。docker呼び出しから切り離してあるのは、この分岐を
+/// docker無しでユニットテストするため。
+fn other_container_error(ps_stdout: &str) -> Option<String> {
+    let running = ps_stdout.trim();
+    if running.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "another agent-audit test container is already running (container id(s): {}); \
+         wait for it to finish or remove it with `docker rm -f`",
+        running.replace('\n', ", ")
+    ))
+}
+
+/// 固定ポート8090 + --network host のため、既に動いている他のテストコンテナと
+/// 共存できない（後発が別プロセスのサーバに喋って `Invalid credentials` という
+/// 原因不明のエラーになる。実機で再現確認済み）。自動削除はしない
+/// — 並走中の正当な実行を殺しかねないため、エラーで即座に知らせる。
+fn ensure_no_other_container_running() -> anyhow::Result<()> {
+    let existing = Command::new("docker")
+        .args(["ps", "-q", "--filter", "name=agent-audit-test-iggy-"])
+        .output()?;
+    match other_container_error(&String::from_utf8_lossy(&existing.stdout)) {
+        Some(msg) => anyhow::bail!(msg),
+        None => Ok(()),
+    }
+}
+
 pub async fn start_iggy() -> anyhow::Result<(String, String, String)> {
+    ensure_no_other_container_running()?;
+
     let container = format!("agent-audit-test-iggy-{}", std::process::id());
     // `--rm` is deliberately omitted: `docker stop` on a `--rm` container removes
     // it immediately, which would make a later `docker start` (used by the E2E
@@ -133,4 +165,23 @@ pub async fn start_iggy() -> anyhow::Result<(String, String, String)> {
 
     std::mem::forget(guard);
     Ok((IGGY_ADDR.to_string(), pat.token, container))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn other_container_error_is_none_for_empty_or_blank_output() {
+        assert_eq!(other_container_error(""), None);
+        assert_eq!(other_container_error("\n"), None);
+        assert_eq!(other_container_error("   \n  "), None);
+    }
+
+    #[test]
+    fn other_container_error_lists_container_ids() {
+        let msg = other_container_error("abc123\ndef456\n").unwrap();
+        assert!(msg.contains("abc123, def456"), "{msg}");
+        assert!(msg.contains("docker rm -f"), "{msg}");
+    }
 }

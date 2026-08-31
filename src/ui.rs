@@ -167,9 +167,37 @@ pub fn event_summary(e: &AuditEvent) -> String {
     s
 }
 
+/// 詳細ペインに渡す前に制御文字（`\x1b` を含む）を落とす。ここは信頼できない
+/// 本文（LLM/ツールの出力）が端末へ渡る境界なので、エスケープシーケンスの
+/// 素通しは避ける。改行は複数行本文の表示に要るので残す。
+fn sanitize(s: &str) -> String {
+    s.chars()
+        .filter(|c| *c == '\n' || !c.is_control())
+        .collect()
+}
+
 pub fn event_detail(e: &AuditEvent) -> String {
     if let Some(n) = is_truncated(&e.payload) {
         return format!("切り詰め（{n}バイト）。全文は送信元の WAL に残っています。");
+    }
+    match e.kind {
+        Kind::LlmRequest => {
+            if let Some(messages) = e.payload.get("messages").and_then(|v| v.as_array()) {
+                let mut out = String::new();
+                for m in messages {
+                    let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("");
+                    let content = m.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                    out.push_str(&sanitize(&format!("{role}: {content}\n")));
+                }
+                return out;
+            }
+        }
+        Kind::LlmResponse | Kind::ToolResult => {
+            if let Some(content) = e.payload.get("content").and_then(|v| v.as_str()) {
+                return sanitize(content);
+            }
+        }
+        _ => {}
     }
     serde_json::to_string_pretty(&e.payload).unwrap_or_default()
 }
@@ -233,7 +261,6 @@ mod tests {
         app.apply(Msg::Events {
             session: "s1".into(),
             raw: raw_fixture("truncated.json"),
-            next_offset: 1,
             replace: true,
         });
         let s = render(&app);
@@ -251,12 +278,59 @@ mod tests {
         app.apply(Msg::Events {
             session: "s1".into(),
             raw,
-            next_offset: 6,
             replace: true,
         });
         app.apply(Msg::Error("Iggyに接続できません".into()));
         let s = render(&app);
         assert!(s.contains("Iggyに接続できません"));
         assert!(s.contains("結果待ち"), "{s}");
+    }
+
+    #[test]
+    fn detail_pane_renders_multiline_content_as_real_line_breaks() {
+        let mut app = App::new();
+        app.apply(Msg::Sessions(vec!["s1".into()]));
+        app.apply(Msg::Events {
+            session: "s1".into(),
+            raw: raw_fixture("multiline.json"),
+            replace: true,
+        });
+        // selected_row defaults to 0: the llm_request event
+        let s = render(&app);
+        assert!(s.contains("user: line one"), "{s}");
+        // real line breaks put "line two" and "line three" on their own terminal
+        // rows, not appended after "line one" on the same row
+        let row_with_line_one = s
+            .lines()
+            .find(|l| l.contains("user: line one"))
+            .expect("line one must be rendered");
+        assert!(!row_with_line_one.contains("line two"), "{s}");
+        assert!(s.contains("line two"), "{s}");
+        assert!(s.contains("line three"), "{s}");
+        assert!(
+            !s.contains("line one\\nline two"),
+            "content must not stay as an escaped single line: {s}"
+        );
+    }
+
+    #[test]
+    fn detail_pane_renders_llm_response_content_as_raw_text() {
+        let mut app = App::new();
+        app.apply(Msg::Sessions(vec!["s1".into()]));
+        app.apply(Msg::Events {
+            session: "s1".into(),
+            raw: raw_fixture("multiline.json"),
+            replace: true,
+        });
+        app.focus = crate::app::Focus::Timeline;
+        app.selected_row = 1; // the llm_response event
+        let s = render(&app);
+        assert!(s.contains("answer one"), "{s}");
+        assert!(s.contains("answer two"), "{s}");
+        let row_with_answer_one = s
+            .lines()
+            .find(|l| l.contains("answer one"))
+            .expect("answer one must be rendered");
+        assert!(!row_with_answer_one.contains("answer two"), "{s}");
     }
 }

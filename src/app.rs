@@ -4,6 +4,10 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::event::{decode_all, group_tool_calls, order_and_dedup, AuditEvent, ToolGroup};
 
+fn collapse_key(g: &ToolGroup) -> (String, usize) {
+    (g.call_id.clone(), g.attempt)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Focus {
     #[default]
@@ -24,7 +28,6 @@ pub enum Msg {
     Events {
         session: String,
         raw: Vec<Vec<u8>>,
-        next_offset: u64,
         replace: bool,
     },
     Error(String),
@@ -44,8 +47,10 @@ pub struct App {
     pub follow: bool,
     pub banner: Option<String>,
     pub skipped: usize,
-    pub next_offset: u64,
-    pub collapsed: HashSet<usize>,
+    // グループの配列添字ではなく (call_id, attempt) をキーにする。添字は再整列や
+    // セッション切替のたびに変わるため、添字キーだと折り畳みが別のグループへ
+    // 移ってしまう。
+    pub collapsed: HashSet<(String, usize)>,
     pub should_quit: bool,
 }
 
@@ -90,7 +95,6 @@ impl App {
             Msg::Events {
                 session,
                 raw,
-                next_offset,
                 replace,
             } => {
                 if self.session_name() != Some(session.as_str()) {
@@ -104,7 +108,6 @@ impl App {
                     evs.append(&mut self.events);
                 }
                 self.events = order_and_dedup(evs);
-                self.next_offset = next_offset;
                 self.rebuild_rows();
                 if self.follow && !self.rows.is_empty() {
                     self.selected_row = self.rows.len() - 1;
@@ -129,13 +132,15 @@ impl App {
             match in_group[i] {
                 None => rows.push(Row::Event(i)),
                 Some(gi) => {
+                    let key = collapse_key(&self.groups[gi]);
+                    let collapsed = self.collapsed.contains(&key);
                     if emitted_group.insert(gi) {
                         rows.push(Row::Group {
                             group: gi,
-                            collapsed: self.collapsed.contains(&gi),
+                            collapsed,
                         });
                     }
-                    if !self.collapsed.contains(&gi) {
+                    if !collapsed {
                         rows.push(Row::Event(i));
                     }
                 }
@@ -175,8 +180,9 @@ impl App {
         let Some(Row::Group { group, .. }) = self.rows.get(self.selected_row).cloned() else {
             return;
         };
-        if !self.collapsed.remove(&group) {
-            self.collapsed.insert(group);
+        let key = collapse_key(&self.groups[group]);
+        if !self.collapsed.remove(&key) {
+            self.collapsed.insert(key);
         }
         self.rebuild_rows();
     }
@@ -184,8 +190,8 @@ impl App {
     fn move_down(&mut self, n: usize) {
         match self.focus {
             Focus::Sessions => {
-                self.selected_session =
-                    (self.selected_session + n).min(self.sessions.len().saturating_sub(1));
+                let next = (self.selected_session + n).min(self.sessions.len().saturating_sub(1));
+                self.select_session(next);
             }
             Focus::Timeline => {
                 self.selected_row = (self.selected_row + n).min(self.rows.len().saturating_sub(1));
@@ -197,13 +203,34 @@ impl App {
 
     fn move_up(&mut self, n: usize) {
         match self.focus {
-            Focus::Sessions => self.selected_session = self.selected_session.saturating_sub(n),
+            Focus::Sessions => {
+                let next = self.selected_session.saturating_sub(n);
+                self.select_session(next);
+            }
             Focus::Timeline => {
                 self.selected_row = self.selected_row.saturating_sub(n);
                 self.detail_scroll = 0;
             }
             Focus::Detail => self.detail_scroll = self.detail_scroll.saturating_sub(n as u16),
         }
+    }
+
+    /// セッション選択が実際に変わる時だけ、前のセッションのタイムラインを消す。
+    /// 消さないと、新セッション名の下に前セッションのイベントが最初の500msの
+    /// 読み込みが届くまで表示され続ける（Msg::Sessionsでの再選択・同名再選択は
+    /// 対象外 — こちらはセッション一覧の定期更新であって切替ではない）。
+    fn select_session(&mut self, idx: usize) {
+        if idx == self.selected_session {
+            return;
+        }
+        self.selected_session = idx;
+        self.events.clear();
+        self.groups.clear();
+        self.rows.clear();
+        self.selected_row = 0;
+        self.detail_scroll = 0;
+        self.skipped = 0;
+        self.collapsed.clear();
     }
 }
 
@@ -226,6 +253,32 @@ mod tests {
         vals.iter().map(|v| v.to_string().into_bytes()).collect()
     }
 
+    fn ev(seq: u64, ts: &str, run_id: &str, kind: &str, call_id: Option<&str>) -> Vec<u8> {
+        let payload = match kind {
+            "llm_request" => serde_json::json!({"messages": [{"role": "user", "content": "hi"}]}),
+            "llm_response" => serde_json::json!({"content": "ok"}),
+            "tool_call" => serde_json::json!({"name": "t"}),
+            "tool_result" => {
+                serde_json::json!({"name": "t", "content": "r", "is_error": false, "duration_ms": 1})
+            }
+            _ => panic!("unknown kind"),
+        };
+        let mut v = serde_json::json!({
+            "v": 1,
+            "id": format!("id-{run_id}-{seq}"),
+            "session_id": "s1",
+            "run_id": run_id,
+            "seq": seq,
+            "ts": ts,
+            "kind": kind,
+            "payload": payload,
+        });
+        if let Some(cid) = call_id {
+            v["call_id"] = serde_json::Value::String(cid.to_string());
+        }
+        v.to_string().into_bytes()
+    }
+
     #[test]
     fn sessions_put_run_prefixed_last() {
         let mut app = App::new();
@@ -244,13 +297,11 @@ mod tests {
         app.apply(Msg::Events {
             session: "s1".into(),
             raw: raw_fixture("basic.json"),
-            next_offset: 7,
             replace: true,
         });
         assert_eq!(app.events.len(), 7);
         assert_eq!(app.groups.len(), 1);
         assert!(app.rows.iter().any(|r| matches!(r, Row::Group { .. })));
-        assert_eq!(app.next_offset, 7);
     }
 
     #[test]
@@ -260,7 +311,6 @@ mod tests {
         app.apply(Msg::Events {
             session: "s1".into(),
             raw: raw_fixture("basic.json"),
-            next_offset: 7,
             replace: true,
         });
         app.focus = Focus::Timeline;
@@ -289,13 +339,11 @@ mod tests {
         app.apply(Msg::Events {
             session: "s1".into(),
             raw: first.to_vec(),
-            next_offset: 2,
             replace: true,
         });
         app.apply(Msg::Events {
             session: "s1".into(),
             raw: rest.to_vec(),
-            next_offset: 6,
             replace: false,
         });
         assert_eq!(app.events.len(), 5);
@@ -347,7 +395,6 @@ mod tests {
         app.apply(Msg::Events {
             session: "s1".into(),
             raw: raw_fixture("basic.json"),
-            next_offset: 7,
             replace: true,
         });
         assert_eq!(app.focus, Focus::Sessions);
@@ -393,7 +440,6 @@ mod tests {
         app.apply(Msg::Events {
             session: "s1".into(),
             raw: raw_fixture("basic.json"),
-            next_offset: 7,
             replace: true,
         });
 
@@ -431,5 +477,107 @@ mod tests {
             app.selected_event().is_some(),
             "Row::Group でも代表イベントが返る"
         );
+    }
+
+    #[test]
+    fn collapse_state_survives_a_reorder_by_call_id_and_attempt() {
+        let mut app = App::new();
+        app.apply(Msg::Sessions(vec!["s1".into()]));
+        // run-a: 1 tool group (call_id "c1")
+        app.apply(Msg::Events {
+            session: "s1".into(),
+            raw: vec![
+                ev(
+                    0,
+                    "2025-01-01T10:00:05Z",
+                    "run-a",
+                    "llm_response",
+                    Some("c1"),
+                ),
+                ev(1, "2025-01-01T10:00:06Z", "run-a", "tool_call", Some("c1")),
+                ev(
+                    2,
+                    "2025-01-01T10:00:07Z",
+                    "run-a",
+                    "tool_result",
+                    Some("c1"),
+                ),
+            ],
+            replace: true,
+        });
+        app.focus = Focus::Timeline;
+        let group_row = app
+            .rows
+            .iter()
+            .position(|r| matches!(r, Row::Group { .. }))
+            .unwrap();
+        app.selected_row = group_row;
+        app.on_key(key(KeyCode::Enter)); // collapse c1/attempt 1
+        assert_eq!(app.collapsed.len(), 1);
+
+        // run-b arrives with an earlier first_ts, so order_and_dedup moves it to the
+        // front and the c1 group's array index shifts.
+        app.apply(Msg::Events {
+            session: "s1".into(),
+            raw: vec![
+                ev(
+                    0,
+                    "2025-01-01T10:00:00Z",
+                    "run-b",
+                    "llm_response",
+                    Some("c2"),
+                ),
+                ev(1, "2025-01-01T10:00:01Z", "run-b", "tool_call", Some("c2")),
+            ],
+            replace: false,
+        });
+
+        let g = app
+            .rows
+            .iter()
+            .find_map(|r| match r {
+                Row::Group { group, collapsed } if app.groups[*group].call_id == "c1" => {
+                    Some(*collapsed)
+                }
+                _ => None,
+            })
+            .expect("c1 group still present after reorder");
+        assert!(g, "c1's collapse state must survive the reorder");
+    }
+
+    #[test]
+    fn collapse_state_does_not_leak_across_session_switch() {
+        let mut app = App::new();
+        app.apply(Msg::Sessions(vec!["s1".into(), "s2".into()]));
+        app.apply(Msg::Events {
+            session: "s1".into(),
+            raw: raw_fixture("basic.json"),
+            replace: true,
+        });
+        app.focus = Focus::Timeline;
+        let group_row = app
+            .rows
+            .iter()
+            .position(|r| matches!(r, Row::Group { .. }))
+            .unwrap();
+        app.selected_row = group_row;
+        app.on_key(key(KeyCode::Enter)); // collapse the group in s1
+        assert_eq!(app.collapsed.len(), 1);
+        assert!(!app.events.is_empty());
+
+        // Switch to s2 via the Sessions pane (j)
+        app.focus = Focus::Sessions;
+        app.on_key(key(KeyCode::Char('j')));
+        assert_eq!(app.selected_session, 1);
+        assert!(
+            app.collapsed.is_empty(),
+            "collapse state must not carry over to the new session"
+        );
+        assert!(
+            app.events.is_empty(),
+            "stale events must not render under s2"
+        );
+        assert!(app.rows.is_empty());
+        assert!(app.groups.is_empty());
     }
 }

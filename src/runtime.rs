@@ -150,7 +150,7 @@ async fn run_session(
                     match with_timeout(fetch_all(be.as_ref(), &session)).await {
                         Ok((raw, next)) => {
                             loaded = Some((session.clone(), next));
-                            let _ = tx.send(Msg::Events { session, raw, next_offset: next, replace: true }).await;
+                            let _ = tx.send(Msg::Events { session, raw, replace: true }).await;
                         }
                         Err(e) => {
                             let _ = tx.send(Msg::Error(format!("読み込みに失敗: {e:#}"))).await;
@@ -162,7 +162,7 @@ async fn run_session(
                     match with_timeout(be.fetch_from(&session, off)).await {
                         Ok((raw, next)) if !raw.is_empty() => {
                             loaded = Some((session.clone(), next));
-                            let _ = tx.send(Msg::Events { session, raw, next_offset: next, replace: false }).await;
+                            let _ = tx.send(Msg::Events { session, raw, replace: false }).await;
                         }
                         Ok(_) => {}
                         Err(e) => {
@@ -313,7 +313,6 @@ mod tests {
             Msg::Events {
                 session: "sess-a".to_string(),
                 raw: vec![b"a".to_vec()],
-                next_offset: 1,
                 replace: true,
             }
         );
@@ -363,7 +362,6 @@ mod tests {
             Msg::Events {
                 session: "sess-a".to_string(),
                 raw: vec![],
-                next_offset: 0,
                 replace: true,
             }
         );
@@ -373,7 +371,6 @@ mod tests {
             Msg::Events {
                 session: "sess-a".to_string(),
                 raw: vec![b"x".to_vec()],
-                next_offset: 5,
                 replace: false,
             }
         );

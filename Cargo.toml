@@ -19,8 +19,15 @@ thiserror = "2"
 async-trait = "0.1"
 bytes = "1"
 
+[features]
+testsupport = []
+
 [dev-dependencies]
 jsonschema = "0.52"
 unicode-width = "0.2"
 tokio = { version = "1", features = ["test-util"] }
 uuid = { version = "1", features = ["v4"] }
+# 結合テスト・E2Eバイナリはlibクレートを別コンパイル単位として使うので、
+# testsupport featureを自分自身に対して有効化しないとdocker起動ヘルパーが見えない。
+# release buildはこのfeatureを付けないので、以下のシンボルは含まれない。
+agent-audit = { path = ".", features = ["testsupport"] }

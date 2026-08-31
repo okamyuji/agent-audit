@@ -23,3 +23,10 @@ exclude_re = [
     'src/tui\.rs.*replace read_key',
     'src/runtime\.rs.*replace network_loop',
 ]
+
+# docker統合テスト(iggy_integration/e2e)はcargo-mutantsのタイムアウトkillで
+# ContainerGuardのDropが走らず、コンテナが残留する。残ったコンテナは固定ポート
+# 8090を握ったままなので、以降の全mutantがdocker系テストを環境要因（Invalid
+# credentials）で失敗させ、「mutantがcaughtされた」ように水増しされる（本ブランチの
+# 最終レビューで実機再現済み）。libユニットテストだけに絞ってdocker依存を切り離す。
+additional_cargo_test_args = ["--lib"]

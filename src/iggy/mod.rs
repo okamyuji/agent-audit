@@ -1,10 +1,13 @@
 use anyhow::Context;
 use async_trait::async_trait;
+#[cfg(feature = "testsupport")]
 use bytes::Bytes;
 use iggy::prelude::*;
 
 /// 結合テスト・E2E から実 Iggy コンテナを起動するためのヘルパー。
-/// 本番コードからは使わない
+/// 本番コードからは使わない。リリースバイナリに書き込み系APIを含めないよう
+/// feature gateする（`cargo build --release` はtestsupportを付けない）。
+#[cfg(feature = "testsupport")]
 pub mod testsupport;
 
 pub const POLL_BATCH: u32 = 100;
@@ -42,6 +45,7 @@ impl IggyBackend {
     }
 
     /// 結合テスト用。stream が無ければ作る
+    #[cfg(feature = "testsupport")]
     pub async fn ensure_stream_for_test(&self) -> anyhow::Result<()> {
         if self.client.get_stream(&self.stream_id()?).await?.is_none() {
             self.client.create_stream(&self.stream).await?;
@@ -50,6 +54,7 @@ impl IggyBackend {
     }
 
     /// 結合テスト用。topic が無ければ作り、payload を順に送る
+    #[cfg(feature = "testsupport")]
     pub async fn produce_for_test(
         &self,
         session: &str,
