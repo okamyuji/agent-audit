@@ -1,0 +1,19 @@
+[package]
+name = "agent-audit"
+version = "0.1.0"
+edition = "2021"
+description = "Replay viewer for go-llm-agent audit events stored in Apache Iggy"
+license = "MIT"
+
+[dependencies]
+iggy = "0.10.0"
+ratatui = "0.30"
+crossterm = "0.29"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
