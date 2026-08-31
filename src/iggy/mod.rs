@@ -3,6 +3,10 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use iggy::prelude::*;
 
+/// 結合テスト・E2E から実 Iggy コンテナを起動するためのヘルパー。
+/// 本番コードからは使わない
+pub mod testsupport;
+
 pub const POLL_BATCH: u32 = 100;
 
 #[async_trait]

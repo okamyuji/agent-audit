@@ -51,6 +51,21 @@ impl Connector for IggyConnector {
     }
 }
 
+/// Iggy への1呼び出しに許す上限時間。この crate の TCP クライアントは接続先が
+/// 突然消えても読み取りが OS の再送タイムアウト任せになり、実測で数十秒以上
+/// ハングし続けることを確認したため、明示的なタイムアウトで区切って
+/// エラー経路（再接続・バナー表示）に落とす
+const CALL_TIMEOUT: Duration = Duration::from_secs(3);
+
+async fn with_timeout<T>(
+    fut: impl std::future::Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+    match tokio::time::timeout(CALL_TIMEOUT, fut).await {
+        Ok(r) => r,
+        Err(_) => anyhow::bail!("応答がありません（タイムアウト）"),
+    }
+}
+
 /// 内側のセッションループの終了理由
 #[derive(Debug, PartialEq)]
 enum LoopExit {
@@ -119,7 +134,7 @@ async fn run_session(
     loop {
         tokio::select! {
             _ = sessions_tick.tick() => {
-                match be.list_sessions().await {
+                match with_timeout(be.list_sessions()).await {
                     Ok(s) => { let _ = tx.send(Msg::Sessions(s)).await; }
                     Err(e) => {
                         let _ = tx.send(Msg::Error(format!("一覧取得に失敗: {e:#}"))).await;
@@ -132,7 +147,7 @@ async fn run_session(
                 let Some(session) = session else { continue };
                 let need_full = loaded.as_ref().map(|(s, _)| s != &session).unwrap_or(true);
                 if need_full {
-                    match fetch_all(be.as_ref(), &session).await {
+                    match with_timeout(fetch_all(be.as_ref(), &session)).await {
                         Ok((raw, next)) => {
                             loaded = Some((session.clone(), next));
                             let _ = tx.send(Msg::Events { session, raw, next_offset: next, replace: true }).await;
@@ -144,7 +159,7 @@ async fn run_session(
                     }
                 } else if follow {
                     let (_, off) = loaded.clone().unwrap();
-                    match be.fetch_from(&session, off).await {
+                    match with_timeout(be.fetch_from(&session, off)).await {
                         Ok((raw, next)) if !raw.is_empty() => {
                             loaded = Some((session.clone(), next));
                             let _ = tx.send(Msg::Events { session, raw, next_offset: next, replace: false }).await;
