@@ -276,4 +276,44 @@ mod tests {
         assert_eq!(groups.len(), 2);
         assert_eq!((groups[0].attempt, groups[1].attempt), (1, 2));
     }
+
+    fn synth(kind: Kind, call_id: Option<&str>) -> AuditEvent {
+        AuditEvent {
+            v: 1,
+            id: "id".to_string(),
+            session_id: "s".to_string(),
+            run_id: "r".to_string(),
+            seq: 0,
+            ts: Utc::now(),
+            kind,
+            provider: None,
+            model: None,
+            call_id: call_id.map(str::to_string),
+            payload: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn call_id_none_and_non_tool_kinds_are_skipped_tool_call_or_result_first_opens_a_group() {
+        let evs = vec![
+            // call_id が無いイベントは無視される
+            synth(Kind::Usage, None),
+            // call_id はあるが tool 関連でない種別は無視される
+            synth(Kind::LlmRequest, Some("cx")),
+            // 先に ToolCall が来る（LlmResponse なし）
+            synth(Kind::ToolCall, Some("cy")),
+            // 先に ToolResult が来る（LlmResponse も ToolCall もなし）
+            synth(Kind::ToolResult, Some("cz")),
+        ];
+        let groups = group_tool_calls(&evs);
+        assert_eq!(
+            groups.len(),
+            2,
+            "cx は無視され、cy と cz のみグループになる"
+        );
+        assert_eq!(groups[0].call_id, "cy");
+        assert!(groups[0].call.is_some() && groups[0].response.is_none());
+        assert_eq!(groups[1].call_id, "cz");
+        assert!(groups[1].result.is_some() && groups[1].call.is_none());
+    }
 }

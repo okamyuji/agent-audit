@@ -18,6 +18,7 @@ pub enum Row {
     Group { group: usize, collapsed: bool },
 }
 
+#[derive(Debug, PartialEq)]
 pub enum Msg {
     Sessions(Vec<String>),
     Events {
@@ -148,27 +149,36 @@ impl App {
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('f') => self.follow = !self.follow,
-            KeyCode::Tab => {
-                self.focus = match self.focus {
-                    Focus::Sessions => Focus::Timeline,
-                    Focus::Timeline => Focus::Detail,
-                    Focus::Detail => Focus::Sessions,
-                }
-            }
+            KeyCode::Tab => self.cycle_focus(),
             KeyCode::Char('j') | KeyCode::Down => self.move_down(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_up(1),
             KeyCode::PageDown => self.move_down(10),
             KeyCode::PageUp => self.move_up(10),
-            KeyCode::Enter if self.focus == Focus::Timeline => {
-                if let Some(Row::Group { group, .. }) = self.rows.get(self.selected_row).cloned() {
-                    if !self.collapsed.remove(&group) {
-                        self.collapsed.insert(group);
-                    }
-                    self.rebuild_rows();
-                }
-            }
+            KeyCode::Enter => self.toggle_collapse_if_timeline(),
             _ => {}
         }
+    }
+
+    fn cycle_focus(&mut self) {
+        self.focus = match self.focus {
+            Focus::Sessions => Focus::Timeline,
+            Focus::Timeline => Focus::Detail,
+            Focus::Detail => Focus::Sessions,
+        };
+    }
+
+    /// Timeline フォーカス時、選択中の行がグループならその折り畳みを切り替える
+    fn toggle_collapse_if_timeline(&mut self) {
+        if self.focus != Focus::Timeline {
+            return;
+        }
+        let Some(Row::Group { group, .. }) = self.rows.get(self.selected_row).cloned() else {
+            return;
+        };
+        if !self.collapsed.remove(&group) {
+            self.collapsed.insert(group);
+        }
+        self.rebuild_rows();
     }
 
     fn move_down(&mut self, n: usize) {
@@ -309,5 +319,117 @@ mod tests {
         assert!(app.follow);
         app.on_key(key(KeyCode::Char('q')));
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn j_k_pagedown_pageup_move_session_selection() {
+        let mut app = App::new();
+        app.apply(Msg::Sessions(vec!["s1".into(), "s2".into(), "s3".into()]));
+        assert_eq!(app.focus, Focus::Sessions);
+        app.on_key(key(KeyCode::Char('j')));
+        assert_eq!(app.selected_session, 1);
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(app.selected_session, 2);
+        app.on_key(key(KeyCode::PageDown));
+        assert_eq!(app.selected_session, 2, "capped at the last session");
+        app.on_key(key(KeyCode::Char('k')));
+        assert_eq!(app.selected_session, 1);
+        app.on_key(key(KeyCode::Up));
+        assert_eq!(app.selected_session, 0);
+        app.on_key(key(KeyCode::PageUp));
+        assert_eq!(app.selected_session, 0, "capped at 0");
+    }
+
+    #[test]
+    fn tab_cycles_focus_and_timeline_detail_navigation_moves_rows_and_scroll() {
+        let mut app = App::new();
+        app.apply(Msg::Sessions(vec!["s1".into()]));
+        app.apply(Msg::Events {
+            session: "s1".into(),
+            raw: raw_fixture("basic.json"),
+            next_offset: 7,
+            replace: true,
+        });
+        assert_eq!(app.focus, Focus::Sessions);
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.focus, Focus::Timeline);
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.focus, Focus::Detail);
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.focus, Focus::Sessions);
+
+        app.focus = Focus::Timeline;
+        let last_row = app.rows.len() - 1;
+        assert!(last_row >= 1, "fixture must produce at least 2 rows");
+        app.on_key(key(KeyCode::PageDown));
+        assert_eq!(app.selected_row, last_row, "capped at the last row");
+        app.on_key(key(KeyCode::Char('k')));
+        assert_eq!(app.selected_row, last_row - 1);
+        app.on_key(key(KeyCode::PageUp));
+        assert_eq!(app.selected_row, 0, "capped at 0");
+        app.on_key(key(KeyCode::Char('j')));
+        assert_eq!(app.selected_row, 1);
+
+        app.focus = Focus::Detail;
+        app.detail_scroll = 5;
+        app.on_key(key(KeyCode::Char('j')));
+        assert_eq!(app.detail_scroll, 6);
+        app.on_key(key(KeyCode::PageDown));
+        assert_eq!(app.detail_scroll, 16);
+        app.on_key(key(KeyCode::Char('k')));
+        assert_eq!(app.detail_scroll, 15);
+        app.on_key(key(KeyCode::PageUp));
+        assert_eq!(app.detail_scroll, 5);
+        app.on_key(key(KeyCode::Up));
+        assert_eq!(app.detail_scroll, 4);
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(app.detail_scroll, 5);
+    }
+
+    #[test]
+    fn enter_is_noop_outside_timeline_or_on_non_group_row_selected_event_resolves_both_row_kinds() {
+        let mut app = App::new();
+        app.apply(Msg::Sessions(vec!["s1".into()]));
+        app.apply(Msg::Events {
+            session: "s1".into(),
+            raw: raw_fixture("basic.json"),
+            next_offset: 7,
+            replace: true,
+        });
+
+        // Enter に反応するのは Timeline フォーカス時のみ
+        app.focus = Focus::Sessions;
+        let before = app.rows.clone();
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(
+            before, app.rows,
+            "Sessions フォーカスでは Enter は無視される"
+        );
+
+        app.focus = Focus::Timeline;
+        let event_row = app
+            .rows
+            .iter()
+            .position(|r| matches!(r, Row::Event(_)))
+            .expect("fixture must contain a plain event row");
+        app.selected_row = event_row;
+        let before = app.rows.clone();
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(before, app.rows, "Event 行では Enter は何もしない");
+        assert!(
+            app.selected_event().is_some(),
+            "Row::Event が指すイベントが返る"
+        );
+
+        let group_row = app
+            .rows
+            .iter()
+            .position(|r| matches!(r, Row::Group { .. }))
+            .expect("fixture must contain a group row");
+        app.selected_row = group_row;
+        assert!(
+            app.selected_event().is_some(),
+            "Row::Group でも代表イベントが返る"
+        );
     }
 }

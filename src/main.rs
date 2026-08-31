@@ -1,9 +1,7 @@
 use std::io;
-use std::time::Duration;
 
 use clap::Parser;
 use crossterm::{
-    event::{self, Event, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -12,53 +10,62 @@ use tokio::sync::mpsc;
 
 use agent_audit::app::{App, Msg};
 use agent_audit::runtime::{network_loop, Cli};
-use agent_audit::ui;
+use agent_audit::tui::{run_ui, CrosstermEvents};
+
+fn read_pat() -> anyhow::Result<String> {
+    std::env::var("IGGY_PAT").map_err(|_| anyhow::anyhow!("環境変数 IGGY_PAT を設定してください"))
+}
+
+fn enter_alt_screen() -> anyhow::Result<io::Stdout> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    Ok(stdout)
+}
+
+fn init_terminal() -> anyhow::Result<Terminal<CrosstermBackend<io::Stdout>>> {
+    let stdout = enter_alt_screen()?;
+    Ok(Terminal::new(CrosstermBackend::new(stdout))?)
+}
+
+/// 端末を元の状態に戻すベストエフォート処理。アプリ本来の結果（`result`）を
+/// クリーンアップ失敗で覆い隠さないよう、エラーは意図的に無視する
+fn teardown_terminal(term: &mut Terminal<CrosstermBackend<io::Stdout>>) {
+    let _ = disable_raw_mode();
+    let _ = execute!(term.backend_mut(), LeaveAlternateScreen);
+    let _ = term.show_cursor();
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let pat = std::env::var("IGGY_PAT")
-        .map_err(|_| anyhow::anyhow!("環境変数 IGGY_PAT を設定してください"))?;
+    let pat = read_pat()?;
     let (tx, mut rx) = mpsc::channel::<Msg>(64);
     let (sel_tx, sel_rx) = tokio::sync::watch::channel::<(Option<String>, bool)>((None, false));
     tokio::spawn(network_loop(cli, pat, tx, sel_rx));
 
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-    let mut term = Terminal::new(CrosstermBackend::new(stdout))?;
+    let mut term = init_terminal()?;
     let mut app = App::new();
-    let result = run_ui(&mut term, &mut app, &mut rx, &sel_tx).await;
-    disable_raw_mode()?;
-    execute!(term.backend_mut(), LeaveAlternateScreen)?;
-    term.show_cursor()?;
+    let result = run_ui(&mut term, &mut app, &mut rx, &sel_tx, &mut CrosstermEvents).await;
+    teardown_terminal(&mut term);
     result
 }
 
-async fn run_ui(
-    term: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    app: &mut App,
-    rx: &mut mpsc::Receiver<Msg>,
-    sel_tx: &tokio::sync::watch::Sender<(Option<String>, bool)>,
-) -> anyhow::Result<()> {
-    loop {
-        term.draw(|f| ui::draw(f, app))?;
-        while let Ok(m) = rx.try_recv() {
-            app.apply(m);
-        }
-        if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(k) = event::read()? {
-                if k.kind == KeyEventKind::Press {
-                    app.on_key(k);
-                }
-            }
-        }
-        let want = (app.session_name().map(str::to_string), app.follow);
-        if *sel_tx.borrow() != want {
-            let _ = sel_tx.send(want);
-        }
-        if app.should_quit {
-            return Ok(());
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 同じプロセス内の環境変数を読み書きするため、他のテストと並行実行させない
+    /// よう1つのテスト関数にまとめる
+    #[test]
+    fn read_pat_reads_env_var_and_errors_when_unset() {
+        std::env::remove_var("IGGY_PAT");
+        let err = read_pat().unwrap_err();
+        assert!(err.to_string().contains("IGGY_PAT"));
+
+        std::env::set_var("IGGY_PAT", "secret-token");
+        assert_eq!(read_pat().unwrap(), "secret-token");
+
+        std::env::remove_var("IGGY_PAT");
     }
 }
