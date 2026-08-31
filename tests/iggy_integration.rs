@@ -6,6 +6,16 @@ use iggy::prelude::*;
 
 const IGGY_ADDR: &str = "127.0.0.1:8090";
 
+/// `docker rm -f` on drop, so every early-return path (including bare `?`)
+/// still tears the container down.
+struct ContainerGuard(String);
+
+impl Drop for ContainerGuard {
+    fn drop(&mut self) {
+        let _ = Command::new("docker").args(["rm", "-f", &self.0]).status();
+    }
+}
+
 /// コンテナログから "Generated root user password: <pw>" 行を待って抽出する
 async fn wait_for_generated_root_password(
     container: &str,
@@ -41,7 +51,7 @@ fn docker_available() -> bool {
 
 /// apache/iggy:0.8.0 を立て、root ユーザーで PAT を作って返す。
 /// PAT の作成は iggy の Rust クライアントで行う（PersonalAccessTokenClient::create_personal_access_token）
-async fn start_iggy() -> anyhow::Result<(String, String)> {
+async fn start_iggy() -> anyhow::Result<(String, ContainerGuard)> {
     let container = format!("agent-audit-test-iggy-{}", std::process::id());
     let status = Command::new("docker")
         .args([
@@ -63,6 +73,8 @@ async fn start_iggy() -> anyhow::Result<(String, String)> {
         ])
         .status()?;
     anyhow::ensure!(status.success(), "docker run failed");
+    // Guard from here on: any `?` below now tears the container down on drop.
+    let guard = ContainerGuard(container.clone());
 
     // TCP 8090 が開くまで最大30秒待つ
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
@@ -71,9 +83,6 @@ async fn start_iggy() -> anyhow::Result<(String, String)> {
             break;
         }
         if std::time::Instant::now() >= deadline {
-            let _ = Command::new("docker")
-                .args(["rm", "-f", &container])
-                .status();
             anyhow::bail!("iggy did not open {IGGY_ADDR} within 30s");
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -82,16 +91,7 @@ async fn start_iggy() -> anyhow::Result<(String, String)> {
     // このイメージは初回起動時にランダムな root パスワードを生成し、
     // コンテナログに1行 "Generated root user password: <pw>" として出力する
     // （固定の "iggy"/"iggy" では Invalid credentials になる。生ソケットで確認済み）。
-    let root_password = wait_for_generated_root_password(&container, &deadline).await;
-    let root_password = match root_password {
-        Ok(pw) => pw,
-        Err(e) => {
-            let _ = Command::new("docker")
-                .args(["rm", "-f", &container])
-                .status();
-            return Err(e);
-        }
-    };
+    let root_password = wait_for_generated_root_password(&container, &deadline).await?;
 
     // ポートは開いてもサーバーがログインを受け付けるまで少し遅延することがあるので数回リトライする
     let client = IggyClientBuilder::new()
@@ -114,9 +114,6 @@ async fn start_iggy() -> anyhow::Result<(String, String)> {
         }
     }
     if let Some(e) = last_err {
-        let _ = Command::new("docker")
-            .args(["rm", "-f", &container])
-            .status();
         anyhow::bail!("login_user failed: {e}");
     }
 
@@ -124,7 +121,7 @@ async fn start_iggy() -> anyhow::Result<(String, String)> {
         .create_personal_access_token("test", PersonalAccessTokenExpiry::NeverExpire)
         .await?;
 
-    Ok((pat.token, container))
+    Ok((pat.token, guard))
 }
 
 #[tokio::test]
@@ -133,12 +130,8 @@ async fn round_trip_through_real_iggy() -> anyhow::Result<()> {
         eprintln!("skip: docker not available");
         return Ok(());
     }
-    let (pat, container) = start_iggy().await?;
-    let result = run_round_trip(&pat).await;
-    let _ = Command::new("docker")
-        .args(["rm", "-f", &container])
-        .status();
-    result
+    let (pat, _guard) = start_iggy().await?;
+    run_round_trip(&pat).await
 }
 
 async fn run_round_trip(pat: &str) -> anyhow::Result<()> {
