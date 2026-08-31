@@ -1,0 +1,9 @@
+[
+  {"v": 1, "id": "550e8400-e29b-41d4-a716-446655440000", "session_id": "s1", "run_id": "550e8400-e29b-41d4-a716-446655440100", "seq": 0, "ts": "2025-01-01T10:00:00Z", "kind": "llm_request", "provider": "llamacpp", "model": "m", "payload": {"messages": []}},
+  {"v": 1, "id": "550e8400-e29b-41d4-a716-446655440001", "session_id": "s1", "run_id": "550e8400-e29b-41d4-a716-446655440100", "seq": 1, "ts": "2025-01-01T10:00:01Z", "kind": "llm_response", "provider": "llamacpp", "model": "m", "call_id": "c1", "payload": {"response": "call tool"}},
+  {"v": 1, "id": "550e8400-e29b-41d4-a716-446655440002", "session_id": "s1", "run_id": "550e8400-e29b-41d4-a716-446655440100", "seq": 2, "ts": "2025-01-01T10:00:02Z", "kind": "tool_call", "provider": "llamacpp", "model": "m", "call_id": "c1", "payload": {"tool": "test"}},
+  {"v": 1, "id": "550e8400-e29b-41d4-a716-446655440003", "session_id": "s1", "run_id": "550e8400-e29b-41d4-a716-446655440100", "seq": 3, "ts": "2025-01-01T10:00:03Z", "kind": "tool_result", "provider": "llamacpp", "model": "m", "call_id": "c1", "payload": {"result": "ok"}},
+  {"v": 1, "id": "550e8400-e29b-41d4-a716-446655440004", "session_id": "s1", "run_id": "550e8400-e29b-41d4-a716-446655440100", "seq": 4, "ts": "2025-01-01T10:00:04Z", "kind": "llm_request", "provider": "llamacpp", "model": "m", "payload": {"messages": []}},
+  {"v": 1, "id": "550e8400-e29b-41d4-a716-446655440005", "session_id": "s1", "run_id": "550e8400-e29b-41d4-a716-446655440100", "seq": 5, "ts": "2025-01-01T10:00:05Z", "kind": "llm_response", "provider": "llamacpp", "model": "m", "payload": {"response": "done"}},
+  {"v": 1, "id": "550e8400-e29b-41d4-a716-446655440006", "session_id": "s1", "run_id": "550e8400-e29b-41d4-a716-446655440100", "seq": 6, "ts": "2025-01-01T10:00:06Z", "kind": "usage", "provider": "llamacpp", "model": "m", "payload": {"tokens": 100}}
+]
