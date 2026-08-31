@@ -3,3 +3,4 @@
 docs/superpowers/
 .worktrees/
 .DS_Store
+mutants.out*/

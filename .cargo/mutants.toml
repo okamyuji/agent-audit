@@ -1,0 +1,44 @@
+# pty 無しのテスト環境では意味のある形で実行できない、実端末（tty）直結の関数だけを
+# 除外する。除外の理由は1行ずつ:
+#
+# - main.rs teardown_terminal: `disable_raw_mode`/`LeaveAlternateScreen`/`show_cursor`
+#   は実 tty の状態を変更する。テストランナー自身の端末を壊しかねず、CI では tty が
+#   無いため意味のある検証ができない。
+# - main.rs main(): `#[tokio::main]` のエントリポイントそのもの。実端末の初期化
+#   （enable_raw_mode 等）を経由するため同じ理由で除外。
+# - tui.rs CrosstermEvents::poll_key / read_key: `event::poll`/`event::read` は実 tty の
+#   入力を待つ。stdin が tty でない場合の挙動は環境依存で、CI での再現性がない。
+#   ロジック部分（キー種別の判定）は `classify_key` に切り出し済みでテスト対象。
+# - runtime.rs network_loop: `IggyConnector` を組み立てて `run_network_loop` に渡す
+#   薄い配線部分（cc=1）。接続処理自体は `Connector` トレイト経由で `run_network_loop`
+#   のテストが全分岐をカバー済み。この関数だけを検証するには実際に接続を失敗させる
+#   必要があるが、`iggy` クレートの TCP クライアントは既定で無制限リトライ・1秒間隔の
+#   自動再接続を内蔵しており、`client.connect()` は拒否された接続に対してエラーを
+#   返さず内部で無限にリトライし続ける（`iggy-0.10.0/src/tcp/tcp_client.rs` で確認）。
+#   実 Iggy サーバなしにこの配線だけを検証する現実的な方法がない。
+# - iggy/mod.rs IggyBackend の各メソッド（connect / stream_id / list_sessions / fetch_from /
+#   ensure_stream_for_test / produce_for_test）: 実 Iggy サーバへの往復そのもので、単体では
+#   検証できない。tests/iggy_integration.rs と tests/e2e.rs が実コンテナで全経路を通す
+#   （下記の理由で mutants の走行対象からは外れる）。free 関数 fetch_all は単体テスト対象。
+# - iggy/testsupport.rs: docker を起動するテスト用足場そのもの。ロジックは無い。
+# - event.rs order_and_dedup の `e.seq < entry.0` → `<=`: 真の等価 mutant。first_ts の走査は
+#   重複除去後の列に対して行うため、同じ run 内で seq が等しいイベントは存在せず、
+#   `<` と `<=` はどの入力でも同じ結果になる（`>` への置換は
+#   run_order_uses_ts_of_minimum_seq_... で kill 済み）。
+exclude_re = [
+    'src/event\.rs.*replace < with <= in order_and_dedup',
+    'src/main\.rs.*replace teardown_terminal',
+    'src/main\.rs.*replace main ',
+    'src/tui\.rs.*poll_key',
+    'src/tui\.rs.*replace read_key',
+    'src/runtime\.rs.*replace network_loop',
+    'src/iggy/mod\.rs.*IggyBackend',
+    'src/iggy/testsupport\.rs',
+]
+
+# docker統合テスト(iggy_integration/e2e)はcargo-mutantsのタイムアウトkillで
+# ContainerGuardのDropが走らず、コンテナが残留する。残ったコンテナは固定ポート
+# 8090を握ったままなので、以降の全mutantがdocker系テストを環境要因（Invalid
+# credentials）で失敗させ、「mutantがcaughtされた」ように水増しされる（本ブランチの
+# 最終レビューで実機再現済み）。lib と bin のユニットテストだけに絞ってdocker依存を切り離す。
+additional_cargo_test_args = ["--lib", "--bins"]

@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      # tools/crap.sh が cyclomatic の算出に使う。crates.io からのビルドは数分かかるため
+      # ~/.cargo/bin をキャッシュして 2 回目以降を短縮する
+      - uses: actions/cache@v4
+        id: rca
+        with:
+          path: ~/.cargo/bin/rust-code-analysis-cli
+          key: rust-code-analysis-cli-${{ runner.os }}-v1
+      - if: steps.rca.outputs.cache-hit != 'true'
+        run: cargo install rust-code-analysis-cli --locked
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      # docker が使えるランナーなので統合テストと E2E も実 Iggy コンテナで走る
+      - run: cargo test
+      - run: bash tools/crap.sh

@@ -1,0 +1,3 @@
+[
+  {"v": 1, "id": "550e8400-e29b-41d4-a716-446655440010", "session_id": "s1", "run_id": "550e8400-e29b-41d4-a716-446655440110", "seq": 0, "ts": "2025-01-01T10:00:00Z", "kind": "llm_request", "provider": "llamacpp", "model": "m", "payload": {"truncated": true, "bytes": 70000000}}
+]
