@@ -18,3 +18,4 @@ chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
 
 [dev-dependencies]
+jsonschema = "0.52"
