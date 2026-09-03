@@ -4,3 +4,4 @@ docs/superpowers/
 .worktrees/
 .DS_Store
 mutants.out*/
+.code-review-graph/
