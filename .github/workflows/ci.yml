@@ -9,14 +9,19 @@ permissions:
   contents: read
 
 jobs:
-  quality:
+  ci:
+    uses: okamyuji/reusable-workflows/.github/workflows/rust-ci.yml@v1
+
+  crap:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy, llvm-tools-preview
+          components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
@@ -30,8 +35,11 @@ jobs:
           key: rust-code-analysis-cli-${{ runner.os }}-v1
       - if: steps.rca.outputs.cache-hit != 'true'
         run: cargo install rust-code-analysis-cli --locked
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      # docker が使えるランナーなので統合テストと E2E も実 Iggy コンテナで走る
-      - run: cargo test
+      # cargo llvm-cov が統合テストと E2E を実 Iggy コンテナで走らせる
       - run: bash tools/crap.sh
+
+  security:
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: okamyuji/reusable-workflows/.github/workflows/security-scan.yml@v1
