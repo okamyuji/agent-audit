@@ -13,3 +13,9 @@ updates:
         update-types: [minor, patch]
       major:
         update-types: [major]
+  - package-ecosystem: rust-toolchain
+    directory: "/"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
