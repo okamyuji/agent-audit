@@ -6,7 +6,7 @@ description = "Replay viewer for go-llm-agent audit events stored in Apache Iggy
 license = "MIT"
 
 [dependencies]
-iggy = "0.10.0"
+iggy = "0.11.0"
 ratatui = "0.30"
 crossterm = "0.29"
 tokio = { version = "1", features = ["full"] }
@@ -23,7 +23,7 @@ bytes = "1"
 testsupport = []
 
 [dev-dependencies]
-jsonschema = "0.52"
+jsonschema = "0.60"
 unicode-width = "0.2"
 tokio = { version = "1", features = ["test-util"] }
 uuid = { version = "1", features = ["v4"] }
