@@ -49,7 +49,7 @@ async fn wait_for_generated_root_password(
     }
 }
 
-/// apache/iggy:0.8.0 を立て、root ユーザーで PAT を作って `(addr, pat, container名)` を返す。
+/// apache/iggy:0.9.0 を立て、root ユーザーで PAT を作って `(addr, pat, container名)` を返す。
 /// PAT の作成は iggy の Rust クライアントで行う（PersonalAccessTokenClient::create_personal_access_token）。
 ///
 /// 呼び出し側がコンテナの後始末を担う（`ContainerGuard::new(container)` で包むこと）。
@@ -110,7 +110,7 @@ pub async fn start_iggy() -> anyhow::Result<(String, String, String)> {
             // --network host なら同じサーバー/カーネルで正常応答するため host network を使う。
             "--network",
             "host",
-            "apache/iggy:0.8.0",
+            "apache/iggy:0.9.0",
         ])
         .status()?;
     anyhow::ensure!(status.success(), "docker run failed");
