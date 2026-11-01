@@ -73,11 +73,13 @@ impl IggyBackend {
                 .create_topic(
                     &sid,
                     session,
-                    1,
-                    CompressionAlgorithm::None,
-                    None,
-                    IggyExpiry::NeverExpire,
-                    MaxTopicSize::ServerDefault,
+                    &TopicCreateOptions {
+                        partitions_count: Some(1),
+                        compression_algorithm: Some(CompressionAlgorithm::None),
+                        message_expiry: Some(IggyExpiry::NeverExpire),
+                        max_topic_size: Some(MaxTopicSize::ServerDefault),
+                        ..Default::default()
+                    },
                 )
                 .await?;
         }

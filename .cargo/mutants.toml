@@ -14,7 +14,7 @@
 #   のテストが全分岐をカバー済み。この関数だけを検証するには実際に接続を失敗させる
 #   必要があるが、`iggy` クレートの TCP クライアントは既定で無制限リトライ・1秒間隔の
 #   自動再接続を内蔵しており、`client.connect()` は拒否された接続に対してエラーを
-#   返さず内部で無限にリトライし続ける（`iggy-0.10.0/src/tcp/tcp_client.rs` で確認）。
+#   返さず内部で無限にリトライし続ける（`iggy-0.11.0/src/tcp/tcp_client.rs` で確認）。
 #   実 Iggy サーバなしにこの配線だけを検証する現実的な方法がない。
 # - iggy/mod.rs IggyBackend の各メソッド（connect / stream_id / list_sessions / fetch_from /
 #   ensure_stream_for_test / produce_for_test）: 実 Iggy サーバへの往復そのもので、単体では

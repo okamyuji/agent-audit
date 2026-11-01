@@ -12,7 +12,7 @@ Iggyそのものには閲覧画面がありません。`http://127.0.0.1:3000`�
 
 ## 前提
 
-- Apache Iggyサーバー（apache/iggy:0.8.0相当）が起動していること
+- Apache Iggyサーバー（apache/iggy:0.9.0相当）が起動していること
 - 環境変数`IGGY_PAT`にPersonal Access Tokenを設定していること
 
 ### Iggyの起動
@@ -21,7 +21,7 @@ Iggyそのものには閲覧画面がありません。`http://127.0.0.1:3000`�
 docker run -d --name iggy --restart unless-stopped \
   -p 3000:3000 -p 8090:8090 \
   -v iggy-data:/app/local_data \
-  apache/iggy:0.8.0
+  apache/iggy:0.9.0
 ```
 
 macOSのcolimaでは、`-p`によるポート転送ではサーバーが接続を切る場合があります。その場合は`-p`の2行を`--network host --security-opt seccomp=unconfined`に置き換えてください。

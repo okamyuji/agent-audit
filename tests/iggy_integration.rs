@@ -32,7 +32,7 @@ async fn run_round_trip(addr: &str, pat: &str) -> anyhow::Result<()> {
     let (payloads, next) = fetch_all(&be, "sess-1", std::time::Duration::from_secs(30)).await?;
     assert_eq!(payloads, vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
     assert_eq!(next, 3);
-    // IggyMessageHeader の offset フィールド名は 0.10.0 で message.header.offset。
+    // IggyMessageHeader の offset フィールド名は 0.11.0 でも message.header.offset。
     // コンパイルが通ればこの前提は確認済みになる
     Ok(())
 }
