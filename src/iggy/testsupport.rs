@@ -49,14 +49,6 @@ async fn wait_for_generated_root_password(
     }
 }
 
-/// apache/iggy:0.9.0 を立て、root ユーザーで PAT を作って `(addr, pat, container名)` を返す。
-/// PAT の作成は iggy の Rust クライアントで行う（PersonalAccessTokenClient::create_personal_access_token）。
-///
-/// 呼び出し側がコンテナの後始末を担う（`ContainerGuard::new(container)` で包むこと）。
-/// 結合テストと E2E は同じ固定ポート（host network）を使うため、cargo test が
-/// 統合テストバイナリを直列実行することに依存して同時起動を避けている
-/// （cargo は既定でテストバイナリを1つずつ実行するため、並列化するテストランナー
-/// （nextest 等）を使わない限り安全）。
 /// `docker ps -q --filter name=agent-audit-test-iggy-` の標準出力から、他の
 /// agent-audit テストコンテナが動いている場合のエラーメッセージを組み立てる。
 /// 動いていなければ `None`。docker呼び出しから切り離してあるのは、この分岐を
@@ -117,6 +109,14 @@ async fn login_with_retry(client: &IggyClient, password: &str) -> anyhow::Result
     )
 }
 
+/// apache/iggy:0.9.0 を立て、root ユーザーで PAT を作って `(addr, pat, container名)` を返す。
+/// PAT の作成は iggy の Rust クライアントで行う（PersonalAccessTokenClient::create_personal_access_token）。
+///
+/// 呼び出し側がコンテナの後始末を担う（`ContainerGuard::new(container)` で包むこと）。
+/// 結合テストと E2E は同じ固定ポート（host network）を使うため、cargo test が
+/// 統合テストバイナリを直列実行することに依存して同時起動を避けている
+/// （cargo は既定でテストバイナリを1つずつ実行するため、並列化するテストランナー
+/// （nextest 等）を使わない限り安全）。
 pub async fn start_iggy() -> anyhow::Result<(String, String, String)> {
     ensure_no_other_container_running()?;
 
