@@ -24,31 +24,6 @@ impl Drop for ContainerGuard {
     }
 }
 
-/// コンテナログから "Generated root user password: <pw>" 行を待って抽出する
-async fn wait_for_generated_root_password(
-    container: &str,
-    deadline: &std::time::Instant,
-) -> anyhow::Result<String> {
-    const MARKER: &str = "Generated root user password: ";
-    loop {
-        let output = Command::new("docker").args(["logs", container]).output()?;
-        let logs = String::from_utf8_lossy(&output.stdout);
-        let logs_err = String::from_utf8_lossy(&output.stderr);
-        if let Some(line) = logs
-            .lines()
-            .chain(logs_err.lines())
-            .find(|l| l.contains(MARKER))
-        {
-            let pw = line[line.find(MARKER).unwrap() + MARKER.len()..].trim();
-            return Ok(pw.to_string());
-        }
-        if std::time::Instant::now() >= *deadline {
-            anyhow::bail!("did not find generated root password in container logs within deadline");
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
-}
-
 /// `docker ps -q --filter name=agent-audit-test-iggy-` の標準出力から、他の
 /// agent-audit テストコンテナが動いている場合のエラーメッセージを組み立てる。
 /// 動いていなければ `None`。docker呼び出しから切り離してあるのは、この分岐を
@@ -109,7 +84,7 @@ async fn login_with_retry(client: &IggyClient, password: &str) -> anyhow::Result
     )
 }
 
-/// apache/iggy:0.9.0 を立て、root ユーザーで PAT を作って `(addr, pat, container名)` を返す。
+/// apache/iggy:0.10.0 を立て、root ユーザーで PAT を作って `(addr, pat, container名)` を返す。
 /// PAT の作成は iggy の Rust クライアントで行う（PersonalAccessTokenClient::create_personal_access_token）。
 ///
 /// 呼び出し側がコンテナの後始末を担う（`ContainerGuard::new(container)` で包むこと）。
@@ -121,6 +96,13 @@ pub async fn start_iggy() -> anyhow::Result<(String, String, String)> {
     ensure_no_other_container_running()?;
 
     let container = format!("agent-audit-test-iggy-{}", std::process::id());
+    // 0.10 は root の認証情報を明示しないと起動しない。テストごとに実行時に作る
+    let root_password = format!(
+        "{container}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    );
     // `--rm` is deliberately omitted: `docker stop` on a `--rm` container removes
     // it immediately, which would make a later `docker start` (used by the E2E
     // reconnect flow) impossible. `ContainerGuard` guarantees `docker rm -f` cleanup
@@ -140,7 +122,11 @@ pub async fn start_iggy() -> anyhow::Result<(String, String, String)> {
             // --network host なら同じサーバー/カーネルで正常応答するため host network を使う。
             "--network",
             "host",
-            "apache/iggy:0.9.0",
+            "-e",
+            "IGGY_ROOT_USERNAME=iggy",
+            "-e",
+            &format!("IGGY_ROOT_PASSWORD={root_password}"),
+            "apache/iggy:0.10.0",
         ])
         .status()?;
     anyhow::ensure!(status.success(), "docker run failed");
@@ -151,11 +137,6 @@ pub async fn start_iggy() -> anyhow::Result<(String, String, String)> {
     // TCP 8090 が開くまで最大30秒待つ
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     wait_for_port(&deadline).await?;
-
-    // このイメージは初回起動時にランダムな root パスワードを生成し、
-    // コンテナログに1行 "Generated root user password: <pw>" として出力する
-    // （固定の "iggy"/"iggy" では Invalid credentials になる。生ソケットで確認済み）。
-    let root_password = wait_for_generated_root_password(&container, &deadline).await?;
 
     let client = IggyClientBuilder::new()
         .with_tcp()

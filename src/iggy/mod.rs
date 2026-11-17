@@ -54,7 +54,9 @@ impl IggyBackend {
     #[cfg(feature = "testsupport")]
     pub async fn ensure_stream_for_test(&self) -> anyhow::Result<()> {
         if self.client.get_stream(&self.stream_id()?).await?.is_none() {
-            self.client.create_stream(&self.stream).await?;
+            self.client
+                .create_stream(&self.stream, &StreamCreateOptions::default())
+                .await?;
         }
         Ok(())
     }
@@ -111,11 +113,13 @@ impl Backend for IggyBackend {
             .poll_messages(
                 &self.stream_id()?,
                 &Identifier::named(session)?,
-                Some(PARTITION_ID),
+                PARTITION_ID,
                 &Consumer::default(),
                 &PollingStrategy::offset(offset),
-                POLL_BATCH,
-                false,
+                PollOptions {
+                    count: POLL_BATCH,
+                    ..PollOptions::default()
+                },
             )
             .await?;
         let mut next = offset;
