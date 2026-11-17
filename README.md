@@ -12,25 +12,27 @@ Iggyそのものには閲覧画面がありません。`http://127.0.0.1:3000`�
 
 ## 前提
 
-- Apache Iggyサーバー（apache/iggy:0.9.0相当）が起動していること
+- Apache Iggyサーバー（apache/iggy:0.10.0相当）が起動していること。使っているIggy SDK 0.12はサーバー0.10の組でだけ動き、0.9以前のサーバーには接続できません
 - 環境変数`IGGY_PAT`にPersonal Access Tokenを設定していること
 
 ### Iggyの起動
 
+rootのパスワードは起動時に自分で決めて渡します。サーバー0.10は`IGGY_ROOT_USERNAME`と`IGGY_ROOT_PASSWORD`が無いと起動しません。また既定ではコンテナ内の127.0.0.1にだけ待ち受けるので、`-p`で転送するときは待ち受けアドレスも指定します。
+
 ```bash
+export IGGY_ROOT_PASSWORD='<rootパスワード>'
 docker run -d --name iggy --restart unless-stopped \
-  -p 3000:3000 -p 8090:8090 \
+  -p 127.0.0.1:3000:3000 -p 127.0.0.1:8090:8090 \
+  -e IGGY_ROOT_USERNAME=iggy -e IGGY_ROOT_PASSWORD \
+  -e IGGY_TCP_ADDRESS=0.0.0.0:8090 -e IGGY_HTTP_ADDRESS=0.0.0.0:3000 \
+  -e IGGY_NODE_ADVERTISED_ADDRESS=127.0.0.1 \
   -v iggy-data:/app/local_data \
-  apache/iggy:0.9.0
+  apache/iggy:0.10.0
 ```
 
-macOSのcolimaでは、`-p`によるポート転送ではサーバーが接続を切る場合があります。その場合は`-p`の2行を`--network host --security-opt seccomp=unconfined`に置き換えてください。
+macOSのcolimaでは`-p`によるポート転送ではサーバーが接続を切る場合があります。その場合は`-p`の2行を`--network host --security-opt seccomp=unconfined`に置き換え、`IGGY_TCP_ADDRESS`、`IGGY_HTTP_ADDRESS`、`IGGY_NODE_ADVERTISED_ADDRESS`の3つを外してください。
 
-初回起動時のrootパスワードはコンテナのログに出ます。
-
-```bash
-docker logs iggy 2>&1 | grep 'Generated root user password'
-```
+0.9以前のサーバーのデータディレクトリは0.10で読めません。既存の`iggy-data`ボリュームは削除してから起動してください。
 
 ### PATの発行
 
