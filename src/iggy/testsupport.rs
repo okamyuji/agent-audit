@@ -87,6 +87,36 @@ fn ensure_no_other_container_running() -> anyhow::Result<()> {
     }
 }
 
+async fn wait_for_port(deadline: &std::time::Instant) -> anyhow::Result<()> {
+    loop {
+        if std::net::TcpStream::connect(IGGY_ADDR).is_ok() {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= *deadline {
+            anyhow::bail!("iggy did not open {IGGY_ADDR} within 30s");
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// ポートが開いてもサーバーがログインを受け付けるまで少し遅れることがあるので数回リトライする
+async fn login_with_retry(client: &IggyClient, password: &str) -> anyhow::Result<()> {
+    let mut last_err = None;
+    for _ in 0..50 {
+        match client.login_user("iggy", password).await {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                last_err = Some(e);
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        }
+    }
+    anyhow::bail!(
+        "login_user failed: {}",
+        last_err.expect("loop ran at least once")
+    )
+}
+
 pub async fn start_iggy() -> anyhow::Result<(String, String, String)> {
     ensure_no_other_container_running()?;
 
@@ -120,44 +150,19 @@ pub async fn start_iggy() -> anyhow::Result<(String, String, String)> {
 
     // TCP 8090 が開くまで最大30秒待つ
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
-    loop {
-        if std::net::TcpStream::connect(IGGY_ADDR).is_ok() {
-            break;
-        }
-        if std::time::Instant::now() >= deadline {
-            anyhow::bail!("iggy did not open {IGGY_ADDR} within 30s");
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+    wait_for_port(&deadline).await?;
 
     // このイメージは初回起動時にランダムな root パスワードを生成し、
     // コンテナログに1行 "Generated root user password: <pw>" として出力する
     // （固定の "iggy"/"iggy" では Invalid credentials になる。生ソケットで確認済み）。
     let root_password = wait_for_generated_root_password(&container, &deadline).await?;
 
-    // ポートは開いてもサーバーがログインを受け付けるまで少し遅延することがあるので数回リトライする
     let client = IggyClientBuilder::new()
         .with_tcp()
         .with_server_address(IGGY_ADDR.to_string())
         .build()?;
     client.connect().await?;
-
-    let mut last_err = None;
-    for _ in 0..50 {
-        match client.login_user("iggy", &root_password).await {
-            Ok(_) => {
-                last_err = None;
-                break;
-            }
-            Err(e) => {
-                last_err = Some(e);
-                tokio::time::sleep(Duration::from_millis(200)).await;
-            }
-        }
-    }
-    if let Some(e) = last_err {
-        anyhow::bail!("login_user failed: {e}");
-    }
+    login_with_retry(&client, &root_password).await?;
 
     let pat = client
         .create_personal_access_token("test", PersonalAccessTokenExpiry::NeverExpire)
