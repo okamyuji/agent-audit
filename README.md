@@ -22,7 +22,7 @@ rootのパスワードは起動時に自分で決めて渡します。サーバ�
 ```bash
 export IGGY_ROOT_PASSWORD='<rootパスワード>'
 docker run -d --name iggy --restart unless-stopped \
-  -p 3000:3000 -p 8090:8090 \
+  -p 127.0.0.1:3000:3000 -p 127.0.0.1:8090:8090 \
   -e IGGY_ROOT_USERNAME=iggy -e IGGY_ROOT_PASSWORD \
   -e IGGY_TCP_ADDRESS=0.0.0.0:8090 -e IGGY_HTTP_ADDRESS=0.0.0.0:3000 \
   -e IGGY_NODE_ADVERTISED_ADDRESS=127.0.0.1 \
